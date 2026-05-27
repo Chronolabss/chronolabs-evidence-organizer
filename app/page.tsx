@@ -17,6 +17,7 @@ export default function Home() {
   const [category, setCategory] = useState("General");
   const [description, setDescription] = useState("");
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [summary, setSummary] = useState("");
 
   useEffect(() => {
     const savedEvents = localStorage.getItem("chronolabs-events");
@@ -81,8 +82,65 @@ export default function Home() {
   const clearTimeline = () => {
     if (confirm("Are you sure you want to clear the entire timeline?")) {
       setEvents([]);
+      setSummary("");
       resetForm();
     }
+  };
+
+  const generateSummary = () => {
+    if (events.length === 0) {
+      alert("Add at least one event before generating a summary.");
+      return;
+    }
+
+    const sortedEvents = [...events].sort(
+      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+    );
+
+    const categoryCounts = events.reduce<Record<string, number>>((acc, event) => {
+      acc[event.category] = (acc[event.category] || 0) + 1;
+      return acc;
+    }, {});
+
+    const categorySummary = Object.entries(categoryCounts)
+      .map(([cat, count]) => `- ${cat}: ${count} event${count > 1 ? "s" : ""}`)
+      .join("\n");
+
+    const timelineNarrative = sortedEvents
+      .map(
+        (event, index) =>
+          `${index + 1}. On ${event.date}, "${event.title}" was recorded under ${event.category}. ${event.description}`
+      )
+      .join("\n\n");
+
+    const generatedSummary = `CHRONOLABS TIMELINE SUMMARY
+
+Total Events: ${events.length}
+
+CATEGORY BREAKDOWN:
+${categorySummary}
+
+CHRONOLOGICAL NARRATIVE:
+${timelineNarrative}
+
+MISSING INFORMATION CHECKLIST:
+- Are all dates accurate?
+- Are supporting documents, screenshots, photos, or emails saved?
+- Are witnesses or involved parties identified?
+- Are original records preserved?
+- Are follow-up actions documented?
+
+NOTE:
+This summary is an organizational aid only. It does not provide legal advice, medical advice, or professional conclusions.`;
+
+    setSummary(generatedSummary);
+  };
+
+  const copySummary = async () => {
+    if (!summary) return;
+
+    await navigator.clipboard.writeText(summary);
+    alert("Summary copied to clipboard.");
   };
 
   return (
@@ -160,20 +218,31 @@ export default function Home() {
             Timeline ({events.length})
           </h2>
 
-          {events.length > 0 && (
-            <button
-              onClick={clearTimeline}
-              className="border border-red-500 text-red-400 px-4 py-2 rounded-xl hover:bg-red-950 transition"
-            >
-              Clear Timeline
-            </button>
-          )}
+          <div className="flex gap-3">
+            {events.length > 0 && (
+              <button
+                onClick={generateSummary}
+                className="border border-blue-500 text-blue-400 px-4 py-2 rounded-xl hover:bg-blue-950 transition"
+              >
+                Generate Summary
+              </button>
+            )}
+
+            {events.length > 0 && (
+              <button
+                onClick={clearTimeline}
+                className="border border-red-500 text-red-400 px-4 py-2 rounded-xl hover:bg-red-950 transition"
+              >
+                Clear Timeline
+              </button>
+            )}
+          </div>
         </div>
 
         {events.length === 0 ? (
           <div className="text-gray-500">No timeline events added yet.</div>
         ) : (
-          <div className="space-y-6">
+          <div className="space-y-6 mb-10">
             {events.map((event) => (
               <div
                 key={event.id}
@@ -208,6 +277,27 @@ export default function Home() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {summary && (
+          <div className="bg-zinc-900 border border-green-700 rounded-2xl p-6">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-2xl font-semibold text-green-400">
+                Generated Summary
+              </h2>
+
+              <button
+                onClick={copySummary}
+                className="border border-green-500 text-green-400 px-4 py-2 rounded-xl hover:bg-green-950 transition"
+              >
+                Copy Summary
+              </button>
+            </div>
+
+            <pre className="whitespace-pre-wrap text-gray-200 text-sm leading-6">
+              {summary}
+            </pre>
           </div>
         )}
       </div>
