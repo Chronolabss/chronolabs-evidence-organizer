@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import jsPDF from "jspdf";
 
 type TimelineEvent = {
   id: number;
@@ -21,7 +22,10 @@ export default function Home() {
 
   useEffect(() => {
     const savedEvents = localStorage.getItem("chronolabs-events");
-    if (savedEvents) setEvents(JSON.parse(savedEvents));
+
+    if (savedEvents) {
+      setEvents(JSON.parse(savedEvents));
+    }
   }, []);
 
   useEffect(() => {
@@ -50,6 +54,7 @@ export default function Home() {
             : event
         )
       );
+
       resetForm();
       return;
     }
@@ -63,6 +68,7 @@ export default function Home() {
     };
 
     setEvents([newEvent, ...events]);
+
     resetForm();
   };
 
@@ -72,7 +78,11 @@ export default function Home() {
     setCategory(event.category);
     setDescription(event.description);
     setEditingId(event.id);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
   };
 
   const deleteEvent = (id: number) => {
@@ -97,13 +107,19 @@ export default function Home() {
       (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
     );
 
-    const categoryCounts = events.reduce<Record<string, number>>((acc, event) => {
-      acc[event.category] = (acc[event.category] || 0) + 1;
-      return acc;
-    }, {});
+    const categoryCounts = events.reduce<Record<string, number>>(
+      (acc, event) => {
+        acc[event.category] = (acc[event.category] || 0) + 1;
+        return acc;
+      },
+      {}
+    );
 
     const categorySummary = Object.entries(categoryCounts)
-      .map(([cat, count]) => `- ${cat}: ${count} event${count > 1 ? "s" : ""}`)
+      .map(
+        ([cat, count]) =>
+          `- ${cat}: ${count} event${count > 1 ? "s" : ""}`
+      )
       .join("\n");
 
     const timelineNarrative = sortedEvents
@@ -125,13 +141,13 @@ ${timelineNarrative}
 
 MISSING INFORMATION CHECKLIST:
 - Are all dates accurate?
-- Are supporting documents, screenshots, photos, or emails saved?
-- Are witnesses or involved parties identified?
-- Are original records preserved?
+- Are supporting documents preserved?
+- Are screenshots and evidence saved?
+- Are involved parties identified?
 - Are follow-up actions documented?
 
 NOTE:
-This summary is an organizational aid only. It does not provide legal advice, medical advice, or professional conclusions.`;
+This summary is an organizational aid only.`;
 
     setSummary(generatedSummary);
   };
@@ -140,13 +156,34 @@ This summary is an organizational aid only. It does not provide legal advice, me
     if (!summary) return;
 
     await navigator.clipboard.writeText(summary);
+
     alert("Summary copied to clipboard.");
+  };
+
+  const downloadPDF = () => {
+    if (!summary) {
+      alert("Generate a summary first.");
+      return;
+    }
+
+    const doc = new jsPDF();
+
+    const lines = doc.splitTextToSize(summary, 180);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(12);
+
+    doc.text(lines, 10, 10);
+
+    doc.save("chronolabs-summary.pdf");
   };
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <div className="max-w-5xl mx-auto">
-        <h1 className="text-5xl font-bold mb-2">ChronoLabs</h1>
+        <h1 className="text-5xl font-bold mb-2">
+          ChronoLabs
+        </h1>
 
         <p className="text-gray-400 mb-10">
           AI-Powered Evidence & Timeline Organizer
@@ -228,6 +265,24 @@ This summary is an organizational aid only. It does not provide legal advice, me
               </button>
             )}
 
+            {summary && (
+              <>
+                <button
+                  onClick={copySummary}
+                  className="border border-green-500 text-green-400 px-4 py-2 rounded-xl hover:bg-green-950 transition"
+                >
+                  Copy Summary
+                </button>
+
+                <button
+                  onClick={downloadPDF}
+                  className="border border-yellow-500 text-yellow-400 px-4 py-2 rounded-xl hover:bg-yellow-950 transition"
+                >
+                  Download PDF
+                </button>
+              </>
+            )}
+
             {events.length > 0 && (
               <button
                 onClick={clearTimeline}
@@ -240,7 +295,9 @@ This summary is an organizational aid only. It does not provide legal advice, me
         </div>
 
         {events.length === 0 ? (
-          <div className="text-gray-500">No timeline events added yet.</div>
+          <div className="text-gray-500">
+            No timeline events added yet.
+          </div>
         ) : (
           <div className="space-y-6 mb-10">
             {events.map((event) => (
@@ -249,16 +306,22 @@ This summary is an organizational aid only. It does not provide legal advice, me
                 className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6"
               >
                 <div className="flex justify-between items-center mb-3">
-                  <h3 className="text-2xl font-bold">{event.title}</h3>
+                  <h3 className="text-2xl font-bold">
+                    {event.title}
+                  </h3>
 
                   <span className="text-sm bg-zinc-700 px-3 py-1 rounded-full">
                     {event.category}
                   </span>
                 </div>
 
-                <p className="text-gray-400 mb-4">{event.date}</p>
+                <p className="text-gray-400 mb-4">
+                  {event.date}
+                </p>
 
-                <p className="text-gray-200 mb-6">{event.description}</p>
+                <p className="text-gray-200 mb-6">
+                  {event.description}
+                </p>
 
                 <div className="flex gap-4">
                   <button
@@ -282,18 +345,9 @@ This summary is an organizational aid only. It does not provide legal advice, me
 
         {summary && (
           <div className="bg-zinc-900 border border-green-700 rounded-2xl p-6">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-2xl font-semibold text-green-400">
-                Generated Summary
-              </h2>
-
-              <button
-                onClick={copySummary}
-                className="border border-green-500 text-green-400 px-4 py-2 rounded-xl hover:bg-green-950 transition"
-              >
-                Copy Summary
-              </button>
-            </div>
+            <h2 className="text-2xl font-semibold text-green-400 mb-4">
+              Generated Summary
+            </h2>
 
             <pre className="whitespace-pre-wrap text-gray-200 text-sm leading-6">
               {summary}
