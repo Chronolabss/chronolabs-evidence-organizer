@@ -4,6 +4,14 @@ import { useEffect, useState } from "react";
 import jsPDF from "jspdf";
 import { supabase } from "../lib/supabase";
 
+type EvidenceAttachment = {
+  name: string;
+  path: string;
+  type: string;
+  size: number;
+  signedUrl?: string;
+};
+
 type TimelineEvent = {
   id: number;
   created_at?: string;
@@ -11,7 +19,7 @@ type TimelineEvent = {
   event_date: string;
   category: string;
   description: string;
-  attachments: string[];
+  attachments: EvidenceAttachment[];
 };
 
 export default function Home() {
@@ -20,16 +28,61 @@ export default function Home() {
   const [eventDate, setEventDate] = useState("");
   const [category, setCategory] = useState("General");
   const [description, setDescription] = useState("");
-  const [attachments, setAttachments] = useState<string[]>([]);
+  const [attachments, setAttachments] = useState<EvidenceAttachment[]>([]);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [summary, setSummary] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All");
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     fetchEvents();
   }, []);
+
+  const getSignedUrl = async (path: string) => {
+    const { data, error } = await supabase.storage
+      .from("evidence-files")
+      .createSignedUrl(path, 60 * 60);
+
+    if (error) {
+      console.error("Signed URL error:", error.message);
+      return undefined;
+    }
+
+    return data.signedUrl;
+  };
+
+  const normalizeAttachments = async (rawAttachments: any[]) => {
+    if (!rawAttachments) return [];
+
+    const normalized = await Promise.all(
+      rawAttachments.map(async (item) => {
+        if (typeof item === "string") {
+          return {
+            name: item,
+            path: "",
+            type: "unknown",
+            size: 0,
+            signedUrl: undefined,
+          };
+        }
+
+        const signedUrl = item.path ? await getSignedUrl(item.path) : undefined;
+
+        return {
+          name: item.name || "Unnamed file",
+          path: item.path || "",
+          type: item.type || "unknown",
+          size: item.size || 0,
+          signedUrl,
+        };
+      })
+    );
+
+    return normalized;
+  };
 
   const fetchEvents = async () => {
     setLoading(true);
@@ -43,7 +96,14 @@ export default function Home() {
       console.error("Error fetching events:", error.message);
       alert("Could not load events from Supabase.");
     } else {
-      setEvents(data || []);
+      const eventsWithSignedUrls = await Promise.all(
+        (data || []).map(async (event) => ({
+          ...event,
+          attachments: await normalizeAttachments(event.attachments || []),
+        }))
+      );
+
+      setEvents(eventsWithSignedUrls);
     }
 
     setLoading(false);
@@ -55,21 +115,62 @@ export default function Home() {
     setCategory("General");
     setDescription("");
     setAttachments([]);
+    setSelectedFiles([]);
     setEditingId(null);
   };
 
   const handleAttachmentChange = (files: FileList | null) => {
     if (!files) return;
-
-    const fileNames = Array.from(files).map((file) => file.name);
-    setAttachments(fileNames);
+    setSelectedFiles(Array.from(files));
   };
+
+  const uploadSelectedFiles = async () => {
+  if (selectedFiles.length === 0) return [];
+
+  setUploading(true);
+
+  try {
+    const uploadedAttachments: EvidenceAttachment[] = [];
+
+    for (const file of selectedFiles) {
+      const safeFileName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, "_");
+      const filePath = `${Date.now()}-${safeFileName}`;
+
+      const { error } = await supabase.storage
+        .from("evidence-files")
+        .upload(filePath, file);
+
+      if (error) {
+        console.error("File upload error:", error.message);
+        alert(`Could not upload file: ${file.name}. ${error.message}`);
+        continue;
+      }
+
+      const signedUrl = await getSignedUrl(filePath);
+
+      uploadedAttachments.push({
+        name: file.name,
+        path: filePath,
+        type: file.type || "unknown",
+        size: file.size,
+        signedUrl,
+      });
+    }
+
+    return uploadedAttachments;
+  } finally {
+    setUploading(false);
+  }
+};
 
   const saveEvent = async () => {
     if (!title || !eventDate || !description) {
       alert("Please complete all required fields.");
       return;
     }
+
+    const newUploadedAttachments = await uploadSelectedFiles();
+    const finalAttachments = [...attachments, ...newUploadedAttachments];
 
     if (editingId) {
       const { error } = await supabase
@@ -79,7 +180,7 @@ export default function Home() {
           event_date: eventDate,
           category,
           description,
-          attachments,
+          attachments: finalAttachments.map(({ signedUrl, ...rest }) => rest),
         })
         .eq("id", editingId);
 
@@ -100,7 +201,7 @@ export default function Home() {
         event_date: eventDate,
         category,
         description,
-        attachments,
+        attachments: finalAttachments.map(({ signedUrl, ...rest }) => rest),
       },
     ]);
 
@@ -120,6 +221,7 @@ export default function Home() {
     setCategory(event.category);
     setDescription(event.description);
     setAttachments(event.attachments || []);
+    setSelectedFiles([]);
     setEditingId(event.id);
 
     window.scrollTo({
@@ -143,10 +245,7 @@ export default function Home() {
   const clearTimeline = async () => {
     if (!confirm("Are you sure you want to clear the entire timeline?")) return;
 
-    const { error } = await supabase
-      .from("events")
-      .delete()
-      .neq("id", 0);
+    const { error } = await supabase.from("events").delete().neq("id", 0);
 
     if (error) {
       console.error("Error clearing timeline:", error.message);
@@ -160,7 +259,9 @@ export default function Home() {
   };
 
   const filteredEvents = events.filter((event) => {
-    const attachmentText = (event.attachments || []).join(" ");
+    const attachmentText = (event.attachments || [])
+      .map((file) => file.name)
+      .join(" ");
 
     const matchesSearch =
       event.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -182,8 +283,7 @@ export default function Home() {
 
     const sortedEvents = [...events].sort(
       (a, b) =>
-        new Date(a.event_date).getTime() -
-        new Date(b.event_date).getTime()
+        new Date(a.event_date).getTime() - new Date(b.event_date).getTime()
     );
 
     const categoryCounts = events.reduce<Record<string, number>>(
@@ -205,7 +305,9 @@ export default function Home() {
       .map((event, index) => {
         const attachmentLine =
           event.attachments && event.attachments.length > 0
-            ? `\n   Attachments: ${event.attachments.join(", ")}`
+            ? `\n   Attachments: ${event.attachments
+                .map((file) => file.name)
+                .join(", ")}`
             : "\n   Attachments: None listed";
 
         return `${index + 1}. On ${event.event_date}, "${event.title}" was recorded under ${event.category}. ${event.description}${attachmentLine}`;
@@ -320,32 +422,53 @@ This summary is an organizational aid only. It does not provide legal advice, me
                 className="block w-full text-sm text-gray-300"
               />
 
-              {attachments.length > 0 && (
+              {selectedFiles.length > 0 && (
                 <div className="mt-4">
                   <p className="text-sm text-gray-400 mb-2">
-                    Selected attachments:
+                    Selected files to upload:
                   </p>
 
                   <ul className="list-disc list-inside text-sm text-gray-300 space-y-1">
-                    {attachments.map((fileName) => (
-                      <li key={fileName}>{fileName}</li>
+                    {selectedFiles.map((file) => (
+                      <li key={file.name}>
+                        {file.name} — {(file.size / 1024 / 1024).toFixed(2)} MB
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {attachments.length > 0 && (
+                <div className="mt-4">
+                  <p className="text-sm text-gray-400 mb-2">
+                    Existing attachments:
+                  </p>
+
+                  <ul className="list-disc list-inside text-sm text-gray-300 space-y-1">
+                    {attachments.map((file) => (
+                      <li key={file.path || file.name}>{file.name}</li>
                     ))}
                   </ul>
                 </div>
               )}
 
               <p className="text-xs text-gray-500 mt-3">
-                Current version stores attachment names only. Cloud file storage
-                will be added later.
+                Files are uploaded to private Supabase Storage. Links are
+                temporary signed links.
               </p>
             </div>
 
             <div className="flex gap-3">
               <button
                 onClick={saveEvent}
-                className="bg-white text-black font-semibold rounded-xl py-3 px-6 hover:bg-gray-300 transition"
+                disabled={uploading}
+                className="bg-white text-black font-semibold rounded-xl py-3 px-6 hover:bg-gray-300 transition disabled:opacity-50"
               >
-                {editingId ? "Save Changes" : "Add Event"}
+                {uploading
+                  ? "Uploading..."
+                  : editingId
+                  ? "Save Changes"
+                  : "Add Event"}
               </button>
 
               {editingId && (
@@ -461,16 +584,23 @@ This summary is an organizational aid only. It does not provide legal advice, me
 
                 {event.attachments && event.attachments.length > 0 && (
                   <div className="bg-zinc-800 border border-zinc-700 rounded-xl p-4 mb-6">
-                    <p className="text-sm font-semibold text-gray-300 mb-2">
+                    <p className="text-sm font-semibold text-gray-300 mb-3">
                       Attachments
                     </p>
 
-                    <ul className="list-disc list-inside text-sm text-gray-400 space-y-1">
-                      {event.attachments.map((fileName) => (
-                        <li key={fileName}>{fileName}</li>
+                      {event.attachments.map((file: any, index: number) => (
+                        <div key={index} className="mt-2">
+                          <a
+                          href={file.signedUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-400 underline"
+                          >
+                            {file.name}
+                            </a>
+                            </div>
                       ))}
-                    </ul>
-                  </div>
+                      </div>
                 )}
 
                 <div className="flex gap-4">
